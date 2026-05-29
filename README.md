@@ -87,10 +87,11 @@ C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /platform:x64 /unsafe /o
 
 Or copy `eos.cs` into Visual Studio and build from there. Whatever you're comfortable with.
 ## Demo
-You can use PowerShell to run directly from memory.
+Use PowerShell to run directly from memory.
 ```powershell
 $bytes = [System.IO.File]::ReadAllBytes("C:\users\public\eos.exe")
 $assembly = [System.Reflection.Assembly]::Load($bytes)
 $assembly.EntryPoint.Invoke($null, $null)
 ```
-![demo](./demo.png)
+Or execute the compiled file directly:
+![demo](./shell.png)
