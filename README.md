@@ -23,7 +23,7 @@ python Eos-Loader.py
 # [+] Raw shellcode size: 460 bytes.
 # [+] C# source written to eos.cs
 # [*] Compile as EXE (x64):
-#    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /platform:x64 /unsafe /out:Injector.exe eos.cs
+#    C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /platform:x64 /unsafe /out:eos.exe eos.cs
 # [*] Start listener: nc -lvnp 443
 ```
 You can compile as above instructions, or just by copying eos.cs and pasting it in Visual Studio. Whatever you're comfortable with.
